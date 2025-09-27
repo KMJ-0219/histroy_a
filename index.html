@@ -103,11 +103,6 @@
             height: 91.667vh; /* 11/12 */
             background: transparent;
             overflow: hidden;
-            cursor: grab;
-        }
-        
-        .work-area.panning {
-            cursor: grabbing;
         }
         
         /* 카드 컨테이너 */
@@ -115,12 +110,7 @@
             position: relative;
             width: 100%;
             height: 100%;
-            transform-origin: 0 0;
-            transition: transform 0.1s ease-out;
-        }
-        
-        .card-container.no-transition {
-            transition: none;
+            overflow: auto;
         }
         
         /* 개별 카드 */
@@ -686,7 +676,6 @@
         <div class="header-controls">
             <button class="btn" onclick="openAddModal()">+ 단체 추가</button>
             <button class="btn" onclick="toggleEditMode()" id="editToggle">편집 모드</button>
-            <button class="btn" onclick="resetView()">🎯 화면 초기화</button>
             <button class="btn" onclick="refreshData()">🔄</button>
         </div>
     </div>
@@ -821,23 +810,13 @@
         // 드래그 관련 변수
         let isDragging = false;
         let isResizing = false;
-        let isPanning = false;
         let dragStart = { x: 0, y: 0 };
         let currentDragCard = null;
         let longPressTimer = null;
         let infoTimeout = null;
         let currentScaleCard = null;
         
-        // 팬/줌 관련 변수
-        let viewTransform = {
-            x: 0,
-            y: 0,
-            scale: 1
-        };
-        let panStart = { x: 0, y: 0 };
-        let lastTouchDistance = 0;
-        
-        // 좌표 변환 함수들 (팬/줌 고려)
+        // 좌표 변환 함수들
         function relativeToPixel(relativeX, relativeY) {
             const workArea = document.querySelector('.work-area');
             const rect = workArea.getBoundingClientRect();
@@ -846,7 +825,7 @@
             const normalizedX = (relativeX - COORDINATE_SYSTEM.X_MIN) / (COORDINATE_SYSTEM.X_MAX - COORDINATE_SYSTEM.X_MIN);
             const normalizedY = (relativeY - COORDINATE_SYSTEM.Y_MIN) / (COORDINATE_SYSTEM.Y_MAX - COORDINATE_SYSTEM.Y_MIN);
             
-            // 픽셀 좌표로 변환 (팬/줌 변환 전 좌표)
+            // 픽셀 좌표로 변환
             const pixelX = normalizedX * rect.width;
             const pixelY = (1 - normalizedY) * rect.height; // Y축 반전 (상단이 +22)
             
@@ -857,13 +836,9 @@
             const workArea = document.querySelector('.work-area');
             const rect = workArea.getBoundingClientRect();
             
-            // 팬/줌 변환 역산 적용
-            const transformedX = (pixelX - viewTransform.x) / viewTransform.scale;
-            const transformedY = (pixelY - viewTransform.y) / viewTransform.scale;
-            
             // 픽셀을 0~1 범위로 정규화
-            const normalizedX = transformedX / rect.width;
-            const normalizedY = 1 - (transformedY / rect.height); // Y축 반전
+            const normalizedX = pixelX / rect.width;
+            const normalizedY = 1 - (pixelY / rect.height); // Y축 반전
             
             // 상대 좌표로 변환
             const relativeX = COORDINATE_SYSTEM.X_MIN + normalizedX * (COORDINATE_SYSTEM.X_MAX - COORDINATE_SYSTEM.X_MIN);
@@ -882,151 +857,7 @@
             return COORDINATE_SYSTEM.Y_MAX - progress * (COORDINATE_SYSTEM.Y_MAX - COORDINATE_SYSTEM.Y_MIN);
         }
         
-        // 팬/줌 함수들
-        function updateViewTransform() {
-            const container = document.getElementById('cardContainer');
-            container.style.transform = `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`;
-        }
-        
-        function getTouchDistance(touches) {
-            if (touches.length < 2) return 0;
-            const dx = touches[0].clientX - touches[1].clientX;
-            const dy = touches[0].clientY - touches[1].clientY;
-            return Math.sqrt(dx * dx + dy * dy);
-        }
-        
-        function setupWorkAreaEvents() {
-            const workArea = document.querySelector('.work-area');
-            const container = document.getElementById('cardContainer');
-            
-            // 마우스 휠로 줌
-            workArea.addEventListener('wheel', (e) => {
-                e.preventDefault();
-                
-                const rect = workArea.getBoundingClientRect();
-                const mouseX = e.clientX - rect.left;
-                const mouseY = e.clientY - rect.top;
-                
-                const oldScale = viewTransform.scale;
-                const zoomSpeed = 0.001;
-                const delta = -e.deltaY * zoomSpeed;
-                
-                viewTransform.scale = Math.max(0.1, Math.min(5, viewTransform.scale + delta));
-                
-                // 마우스 포인터를 중심으로 줌
-                const scaleRatio = viewTransform.scale / oldScale;
-                viewTransform.x = mouseX - (mouseX - viewTransform.x) * scaleRatio;
-                viewTransform.y = mouseY - (mouseY - viewTransform.y) * scaleRatio;
-                
-                updateViewTransform();
-            }, { passive: false });
-            
-            // 마우스 드래그로 팬
-            workArea.addEventListener('mousedown', (e) => {
-                if (e.target === workArea || e.target === container) {
-                    startPan(e);
-                }
-            });
-            
-            // 터치 이벤트
-            workArea.addEventListener('touchstart', (e) => {
-                if (e.touches.length === 1 && (e.target === workArea || e.target === container)) {
-                    startPan(e.touches[0]);
-                } else if (e.touches.length === 2) {
-                    lastTouchDistance = getTouchDistance(e.touches);
-                    const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-                    const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                    const rect = workArea.getBoundingClientRect();
-                    panStart.x = centerX - rect.left - viewTransform.x;
-                    panStart.y = centerY - rect.top - viewTransform.y;
-                }
-            }, { passive: false });
-            
-            workArea.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                
-                if (e.touches.length === 1 && isPanning) {
-                    handlePan(e.touches[0]);
-                } else if (e.touches.length === 2) {
-                    const currentDistance = getTouchDistance(e.touches);
-                    if (lastTouchDistance > 0) {
-                        const scale = currentDistance / lastTouchDistance;
-                        const oldScale = viewTransform.scale;
-                        viewTransform.scale = Math.max(0.1, Math.min(5, viewTransform.scale * scale));
-                        
-                        const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-                        const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                        const rect = workArea.getBoundingClientRect();
-                        const mouseX = centerX - rect.left;
-                        const mouseY = centerY - rect.top;
-                        
-                        const scaleRatio = viewTransform.scale / oldScale;
-                        viewTransform.x = mouseX - (mouseX - viewTransform.x) * scaleRatio;
-                        viewTransform.y = mouseY - (mouseY - viewTransform.y) * scaleRatio;
-                    }
-                    lastTouchDistance = currentDistance;
-                    updateViewTransform();
-                }
-            }, { passive: false });
-            
-            workArea.addEventListener('touchend', (e) => {
-                if (e.touches.length < 2) {
-                    lastTouchDistance = 0;
-                }
-                if (e.touches.length === 0) {
-                    stopPan();
-                }
-            });
-        }
-        
-        function startPan(e) {
-            isPanning = true;
-            const workArea = document.querySelector('.work-area');
-            const container = document.getElementById('cardContainer');
-            
-            workArea.classList.add('panning');
-            container.classList.add('no-transition');
-            
-            panStart.x = (e.clientX || e.pageX) - viewTransform.x;
-            panStart.y = (e.clientY || e.pageY) - viewTransform.y;
-            
-            document.addEventListener('mousemove', handlePan);
-            document.addEventListener('mouseup', stopPan);
-        }
-        
-        function handlePan(e) {
-            if (!isPanning) return;
-            
-            const clientX = e.clientX || e.pageX;
-            const clientY = e.clientY || e.pageY;
-            
-            viewTransform.x = clientX - panStart.x;
-            viewTransform.y = clientY - panStart.y;
-            
-            updateViewTransform();
-        }
-        
-        function stopPan() {
-            if (!isPanning) return;
-            
-            isPanning = false;
-            const workArea = document.querySelector('.work-area');
-            const container = document.getElementById('cardContainer');
-            
-            workArea.classList.remove('panning');
-            container.classList.remove('no-transition');
-            
-            document.removeEventListener('mousemove', handlePan);
-            document.removeEventListener('mouseup', stopPan);
-        }
-        
-        function resetView() {
-            viewTransform.x = 0;
-            viewTransform.y = 0;
-            viewTransform.scale = 1;
-            updateViewTransform();
-            showStatus('화면이 초기 위치로 복원되었습니다.', 'info');
-        }
+        // 유틸리티 함수들
         function showStatus(message, type = 'info') {
             const statusEl = document.getElementById('statusMessage');
             statusEl.textContent = message;
@@ -1152,10 +983,8 @@
                     createYearMarkers();
                     createCards();
                     createConnections();
-                    setupWorkAreaEvents();
                     console.log(`${organizations.length}개의 독립운동 단체 데이터를 로드했습니다.`);
                 } else {
-                    setupWorkAreaEvents();
                     showEmptyState();
                 }
                 
@@ -1692,8 +1521,7 @@
             const cardRect = card.getBoundingClientRect();
             const workAreaRect = document.querySelector('.work-area').getBoundingClientRect();
             
-            // 팬/줌 변환을 고려한 실제 픽셀 좌표 계산
-            const pixelX = (cardRect.left - workAreaRect.left - viewTransform.x) / viewTransform.scale + cardRect.width / (2 * viewTransform.scale);
+            const pixelX = cardRect.left - workAreaRect.left + cardRect.width / 2;
             
             // Y 좌표는 항상 생성/해체 연도의 중점으로 고정
             const startYear = org.생성연도 || minYear;
@@ -1890,7 +1718,7 @@
                 toggleBtn.textContent = '편집 종료';
                 toggleBtn.classList.add('btn-danger');
                 body.classList.add('edit-mode');
-                showStatus('편집 모드 활성화: 1.5초 눌러서 위치 이동, 짧게 클릭하여 슬라이더로 가로 크기 조정', 'info');
+                showStatus('편집 모드 활성화: 1.5초 눌러서 위치 이동, 짧게 클릭하여 가로 크기 조정', 'info');
             } else {
                 toggleBtn.textContent = '편집 모드';
                 toggleBtn.classList.remove('btn-danger');
@@ -1898,7 +1726,9 @@
                 showStatus('편집 모드가 비활성화되었습니다.', 'info');
                 
                 // 편집 중이던 것들 정리
-                hideScaleSlider();
+                if (isHorizontalResizing) {
+                    cancelHorizontalResize();
+                }
             }
         }
         
@@ -1979,8 +1809,8 @@
                 if (document.getElementById('orgModal').classList.contains('active')) {
                     closeModal();
                 }
-                if (currentScaleCard) {
-                    cancelScaleSlider();
+                if (isHorizontalResizing) {
+                    cancelHorizontalResize();
                 }
                 hideCardInfo();
             }
@@ -1988,11 +1818,6 @@
             if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
                 e.preventDefault();
                 openAddModal();
-            }
-            
-            if ((e.ctrlKey || e.metaKey) && e.key === '0') {
-                e.preventDefault();
-                resetView();
             }
             
             if (e.key === 'Delete' && isEditMode) {
@@ -2004,13 +1829,10 @@
             }
         });
         
-        // 전역 클릭 이벤트로 정보창과 슬라이더 숨기기
+        // 전역 클릭 이벤트로 정보창 숨기기
         document.addEventListener('click', (e) => {
-            if (!e.target.closest('.org-card') && !e.target.closest('.card-info') && !e.target.closest('.scale-slider')) {
+            if (!e.target.closest('.org-card') && !e.target.closest('.card-info')) {
                 hideCardInfo();
-                if (currentScaleCard && !e.target.closest('.scale-slider')) {
-                    cancelScaleSlider();
-                }
             }
         });
         
@@ -2021,12 +1843,11 @@
             }
         });
         
-        // 화면 크기 변경 시 재배치 및 뷰포트 초기화
+        // 화면 크기 변경 시 재배치
         let resizeTimeout;
         window.addEventListener('resize', () => {
             clearTimeout(resizeTimeout);
             resizeTimeout = setTimeout(() => {
-                resetView(); // 화면 크기 변경 시 뷰포트 초기화
                 if (organizations.length > 0) {
                     createYearMarkers();
                     createCards();
@@ -2039,7 +1860,6 @@
         // 화면 방향 변경 감지
         window.addEventListener('orientationchange', () => {
             setTimeout(() => {
-                resetView(); // 화면 방향 변경 시 뷰포트 초기화
                 if (organizations.length > 0) {
                     createYearMarkers();
                     createCards();
@@ -2058,9 +1878,7 @@
         console.log('- 연도창은 화면 왼쪽에 배치');
         console.log('- 카드 위치 이동: 1.5초 길게 누르기 후 드래그 (X축만)');
         console.log('- 일반 클릭: 카드 정보 간소화 표시 (3초 후 자동 사라짐)');
-        console.log('- 편집 모드 짧은 클릭: 슬라이더로 가로 크기 조정 (0.2x~3.0x)');
-        console.log('- 화면 팬/줌: 빈 공간 드래그로 이동, 마우스 휠/핀치로 줌');
-        console.log('- 단축키: Ctrl+0으로 화면 초기화, Ctrl+N으로 단체 추가');
+        console.log('- 편집 모드 짧은 클릭: 가로 크기 조정 (엑셀 스타일)');
         console.log('- 모든 변경사항은 Supabase에 실시간 저장됩니다');
         
         // 페이지 로드 완료 후 데이터 로드
@@ -2071,4 +1889,4 @@
         }
     </script>
 </body>
-    </html>
+</html>
