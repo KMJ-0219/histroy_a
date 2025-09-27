@@ -559,6 +559,18 @@
             text-align: center;
         }
         
+        /* 연결선 */
+        .connection-line {
+            position: absolute;
+            z-index: 50;
+            opacity: 0.7;
+            pointer-events: none;
+            background: linear-gradient(90deg, #d4af37, #ffd700);
+            height: 2px;
+            box-shadow: 0 0 4px rgba(212, 175, 55, 0.6);
+            border-radius: 1px;
+        }
+        
         /* 빈 상태 */
         .empty-state {
             position: absolute;
@@ -834,15 +846,11 @@
             const normalizedX = (relativeX - COORDINATE_SYSTEM.X_MIN) / (COORDINATE_SYSTEM.X_MAX - COORDINATE_SYSTEM.X_MIN);
             const normalizedY = (relativeY - COORDINATE_SYSTEM.Y_MIN) / (COORDINATE_SYSTEM.Y_MAX - COORDINATE_SYSTEM.Y_MIN);
             
-            // 기본 픽셀 좌표로 변환
-            const basePixelX = normalizedX * rect.width;
-            const basePixelY = (1 - normalizedY) * rect.height; // Y축 반전 (상단이 +22)
+            // 픽셀 좌표로 변환 (팬/줌 변환 전 좌표)
+            const pixelX = normalizedX * rect.width;
+            const pixelY = (1 - normalizedY) * rect.height; // Y축 반전 (상단이 +22)
             
-            // 팬/줌 변환 적용
-            const transformedX = basePixelX * viewTransform.scale + viewTransform.x;
-            const transformedY = basePixelY * viewTransform.scale + viewTransform.y;
-            
-            return { x: transformedX, y: transformedY };
+            return { x: pixelX, y: pixelY };
         }
         
         function pixelToRelative(pixelX, pixelY) {
@@ -850,12 +858,12 @@
             const rect = workArea.getBoundingClientRect();
             
             // 팬/줌 변환 역산 적용
-            const basePixelX = (pixelX - viewTransform.x) / viewTransform.scale;
-            const basePixelY = (pixelY - viewTransform.y) / viewTransform.scale;
+            const transformedX = (pixelX - viewTransform.x) / viewTransform.scale;
+            const transformedY = (pixelY - viewTransform.y) / viewTransform.scale;
             
-            // 0~1 범위로 정규화
-            const normalizedX = basePixelX / rect.width;
-            const normalizedY = 1 - (basePixelY / rect.height); // Y축 반전
+            // 픽셀을 0~1 범위로 정규화
+            const normalizedX = transformedX / rect.width;
+            const normalizedY = 1 - (transformedY / rect.height); // Y축 반전
             
             // 상대 좌표로 변환
             const relativeX = COORDINATE_SYSTEM.X_MIN + normalizedX * (COORDINATE_SYSTEM.X_MAX - COORDINATE_SYSTEM.X_MIN);
@@ -1143,6 +1151,7 @@
                     updateYearRange();
                     createYearMarkers();
                     createCards();
+                    createConnections();
                     setupWorkAreaEvents();
                     console.log(`${organizations.length}개의 독립운동 단체 데이터를 로드했습니다.`);
                 } else {
@@ -1303,7 +1312,7 @@
             const yearPanel = document.getElementById('yearPanel');
             yearPanel.innerHTML = '';
             
-            // 5년 간격으로 연도 표시 (1945년까지)
+            // 5년 간격으로 연도 표시
             for (let year = 1910; year <= 1945; year += 5) {
                 const marker = document.createElement('div');
                 marker.className = 'year-marker';
@@ -1311,13 +1320,10 @@
                 
                 // Y 좌표계에 따른 위치 계산
                 const relativeY = yearToRelativeY(year);
-                const basePixelPos = relativeToPixel(0, relativeY);
+                const pixelPos = relativeToPixel(0, relativeY);
                 const workArea = document.querySelector('.work-area');
                 const rect = workArea.getBoundingClientRect();
-                
-                // 기본 픽셀 위치만 사용 (팬/줌 변환 전)
-                const basePixelY = ((relativeY - COORDINATE_SYSTEM.Y_MIN) / (COORDINATE_SYSTEM.Y_MAX - COORDINATE_SYSTEM.Y_MIN));
-                const percentage = (1 - basePixelY) * 100; // Y축 반전
+                const percentage = (pixelPos.y / rect.height) * 100;
                 
                 marker.style.position = 'absolute';
                 marker.style.top = `${percentage}%`;
@@ -1572,16 +1578,11 @@
             const newScale = parseFloat(sliderInput.value);
             const org = currentScaleCard.org;
             
-            // 새로운 중심 위치 계산
+            // 새로운 중심 위치 계산 (세로는 변경 없이 가로만)
             const cardRect = currentScaleCard.card.getBoundingClientRect();
             const workAreaRect = document.querySelector('.work-area').getBoundingClientRect();
             
-            // 카드 중심점 계산 (뷰포트 기준)
-            const cardCenterX = cardRect.left - workAreaRect.left + cardRect.width / 2;
-            const cardCenterY = cardRect.top - workAreaRect.top + cardRect.height / 2;
-            
-            // pixelToRelative 함수 사용
-            const relativePos = pixelToRelative(cardCenterX, cardCenterY);
+            const pixelX = cardRect.left - workAreaRect.left + cardRect.width / 2;
             
             // 기존 Y 좌표 유지 (생성/해체 연도 기반 중심점)
             const startYear = org.생성연도 || minYear;
@@ -1589,6 +1590,7 @@
             const midYear = (startYear + endYear) / 2;
             const ym = yearToRelativeY(midYear);
             
+            const relativePos = pixelToRelative(pixelX, 0); // Y는 무시하고 X만 계산
             const constrainedX = Math.max(COORDINATE_SYSTEM.X_MIN, Math.min(COORDINATE_SYSTEM.X_MAX, relativePos.x));
             
             // 데이터베이스에 업데이트
@@ -1690,18 +1692,16 @@
             const cardRect = card.getBoundingClientRect();
             const workAreaRect = document.querySelector('.work-area').getBoundingClientRect();
             
-            // 카드 중심점 계산 (뷰포트 기준)
-            const cardCenterX = cardRect.left - workAreaRect.left + cardRect.width / 2;
-            const cardCenterY = cardRect.top - workAreaRect.top + cardRect.height / 2;
-            
-            // pixelToRelative 함수를 사용해서 정확한 상대 좌표 계산
-            const relativePos = pixelToRelative(cardCenterX, cardCenterY);
+            // 팬/줌 변환을 고려한 실제 픽셀 좌표 계산
+            const pixelX = (cardRect.left - workAreaRect.left - viewTransform.x) / viewTransform.scale + cardRect.width / (2 * viewTransform.scale);
             
             // Y 좌표는 항상 생성/해체 연도의 중점으로 고정
             const startYear = org.생성연도 || minYear;
             const endYear = org.해체연도 || startYear;
             const midYear = (startYear + endYear) / 2;
             const ym = yearToRelativeY(midYear);
+            
+            const relativePos = pixelToRelative(pixelX, 0); // Y는 무시
             
             // X 좌표 범위 제한
             const constrainedX = Math.max(COORDINATE_SYSTEM.X_MIN, Math.min(COORDINATE_SYSTEM.X_MAX, relativePos.x));
@@ -1726,6 +1726,7 @@
             // 카드 재배치 (올바른 세로 위치로)
             setTimeout(() => {
                 createCards();
+                createConnections();
             }, 100);
             
             showStatus('위치가 저장되었습니다.', 'success');
@@ -1818,7 +1819,65 @@
         }
         
         function createConnections() {
-            // 연결선 기능 제거됨 - 이 함수는 더 이상 사용되지 않습니다
+            // 기존 연결선 제거
+            document.querySelectorAll('.connection-line').forEach(line => line.remove());
+            
+            if (organizations.length === 0) return;
+            
+            const container = document.getElementById('cardContainer');
+            const connections = new Set();
+            
+            organizations.forEach(org => {
+                if (org.이전단체 && org.이전단체.trim()) {
+                    const prevOrgNames = org.이전단체.split(',').map(name => name.trim());
+                    prevOrgNames.forEach(prevName => {
+                        const prevOrg = organizations.find(o => 
+                            o.단체이름 === prevName || 
+                            o.단체이름.includes(prevName) ||
+                            prevName.includes(o.단체이름)
+                        );
+                        if (prevOrg && prevOrg.id !== org.id) {
+                            const connectionKey = `${Math.min(prevOrg.id, org.id)}-${Math.max(prevOrg.id, org.id)}`;
+                            if (!connections.has(connectionKey)) {
+                                connections.add(connectionKey);
+                                drawConnection(prevOrg.id, org.id, container);
+                            }
+                        }
+                    });
+                }
+            });
+        }
+        
+        function drawConnection(fromId, toId, container) {
+            const fromCard = document.getElementById(`card-${fromId}`);
+            const toCard = document.getElementById(`card-${toId}`);
+            
+            if (!fromCard || !toCard) return;
+            
+            const line = document.createElement('div');
+            line.className = 'connection-line';
+            
+            const fromRect = fromCard.getBoundingClientRect();
+            const toRect = toCard.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            
+            const fromCenterX = fromRect.left - containerRect.left + fromRect.width / 2;
+            const fromCenterY = fromRect.top - containerRect.top + fromRect.height / 2;
+            const toCenterX = toRect.left - containerRect.left + toRect.width / 2;
+            const toCenterY = toRect.top - containerRect.top + toRect.height / 2;
+            
+            const dx = toCenterX - fromCenterX;
+            const dy = toCenterY - fromCenterY;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+            
+            line.style.width = length + 'px';
+            line.style.left = fromCenterX + 'px';
+            line.style.top = fromCenterY + 'px';
+            line.style.transform = `rotate(${angle}deg)`;
+            line.style.transformOrigin = '0 50%';
+            
+            container.appendChild(line);
         }
         
         // 모달 및 편집 함수들
@@ -1971,6 +2030,7 @@
                 if (organizations.length > 0) {
                     createYearMarkers();
                     createCards();
+                    createConnections();
                 }
                 hideCardInfo();
             }, 250);
@@ -1983,6 +2043,7 @@
                 if (organizations.length > 0) {
                     createYearMarkers();
                     createCards();
+                    createConnections();
                 }
                 hideCardInfo();
             }, 100);
@@ -2010,4 +2071,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
