@@ -1839,21 +1839,33 @@
         
         function openEditModal(orgId) {
             const org = organizations.find(o => o.id === orgId);
-            if (!org) return;
+            if (!org) {
+                showStatus('해당 단체를 찾을 수 없습니다.', 'error');
+                return;
+            }
             
             document.getElementById('modalTitle').textContent = '단체 편집';
             document.getElementById('saveBtn').textContent = '수정';
             currentEditingId = orgId;
             
+            // 폼 초기화 후 데이터 로드
+            document.getElementById('orgForm').reset();
+            
             const fields = ['단체이름', '계열', '생성연도', '해체연도', '활동지역', '대표', '이전단체', '이후단체', '설명'];
             fields.forEach(field => {
                 const element = document.getElementById(field);
-                if (element && org[field]) {
-                    element.value = org[field];
+                if (element) {
+                    // null이나 undefined가 아닌 경우에만 값 설정
+                    if (org[field] !== null && org[field] !== undefined && org[field] !== '') {
+                        element.value = org[field];
+                    } else {
+                        element.value = ''; // 빈 값으로 설정
+                    }
                 }
             });
             
             document.getElementById('orgModal').classList.add('active');
+            showStatus(`${org.단체이름} 정보를 수정할 수 있습니다.`, 'info');
         }
         
         function closeModal() {
@@ -1989,4 +2001,4 @@
         }
     </script>
 </body>
-</html>
+    </html>
